@@ -1,0 +1,39 @@
+id = "pacafe.herdr"
+name = "PA Cafe"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Connect Herdr to your PA Cafe with a code: coding agents' done and blocked states reach the cafe."
+platforms = ["linux", "macos", "windows"]
+
+[[startup]]
+command = ["node", "startup.mjs"]
+
+[[actions]]
+id = "connect"
+title = "Connect to PA Cafe"
+contexts = ["global", "workspace", "tab", "pane"]
+command = ["node", "actions.mjs", "connect"]
+
+[[actions]]
+id = "status"
+title = "PA Cafe connection status"
+contexts = ["global", "workspace", "tab", "pane"]
+command = ["node", "actions.mjs", "status"]
+
+[[actions]]
+id = "disconnect"
+title = "Disconnect from PA Cafe"
+contexts = ["global", "workspace", "tab", "pane"]
+command = ["node", "actions.mjs", "disconnect"]
+
+[[panes]]
+id = "connect"
+title = "Connect to PA Cafe"
+placement = "popup"
+width = 72
+height = 18
+command = ["node", "connect.mjs"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["node", "notify.mjs"]

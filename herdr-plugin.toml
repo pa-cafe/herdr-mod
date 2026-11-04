@@ -1,6 +1,6 @@
 id = "pacafe.herdr"
 name = "PA Cafe"
-version = "0.1.0"
+version = "0.1.2"
 min_herdr_version = "0.9.0"
 description = "Connect Herdr to your PA Cafe with a code: coding agents' done and blocked states reach the cafe."
 platforms = ["linux", "macos", "windows"]

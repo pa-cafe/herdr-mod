@@ -1,10 +1,11 @@
 // Popup pane: pairs this Herdr with a PA Cafe. Shows a code, opens the cafe in the browser, and waits for the barista
 // to approve it there. The cafe sends back the source address and signing key encrypted to a key made here.
 import { execFile } from 'node:child_process';
+import { accessSync, constants, mkdirSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_ORIGIN, deviceKey, openHandover, readConnection, saveConnection } from './link.mjs';
+import { DEFAULT_ORIGIN, deviceKey, openHandover, readConnection, revokeConnection, saveConnection } from './link.mjs';
 
 const zh = /^zh/i.test(process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || '');
 const say = (en, tw) => zh ? tw : en;
@@ -30,15 +31,30 @@ async function post(origin, path, body) {
 
 function waitForKey(seconds) {
   return new Promise(done => {
+    if (!process.stdin.isTTY) return done();
     const timer = setTimeout(done, seconds * 1000);
-    if (!process.stdin.isTTY) return;
     process.stdin.setRawMode(true); process.stdin.resume();
     process.stdin.once('data', () => { clearTimeout(timer); done(); });
   });
 }
 
+// Outside a Herdr pane (an agent running this from a shell) the config directory is not in the environment.
+function configDir(env) {
+  if (env.HERDR_PLUGIN_CONFIG_DIR) return Promise.resolve(env.HERDR_PLUGIN_CONFIG_DIR);
+  return new Promise(done => execFile(env.HERDR_BIN_PATH ?? 'herdr', ['plugin', 'config-dir', 'pacafe.herdr'], (error, out) => done(error ? '' : out.trim())));
+}
+
+// Checked before a code is shown, so the barista never approves a connection this terminal cannot keep.
+function checkConfigDir(env) {
+  const dir = env.HERDR_PLUGIN_CONFIG_DIR;
+  if (!dir) throw new Error(say('Herdr did not give this mod a config directory. Install it with herdr plugin install pa-cafe/herdr-mod.', 'Herdr 沒有給這個 mod 設定目錄。請用 herdr plugin install pa-cafe/herdr-mod 安裝。'));
+  mkdirSync(dir, { recursive: true });
+  accessSync(dir, constants.W_OK);
+}
+
 async function connect(env = process.env) {
   const origin = (env.PACAFE_ORIGIN || DEFAULT_ORIGIN).replace(/\/+$/, '');
+  checkConfigDir(env);
   const existing = readConnection(env);
   console.log(bold('PA Cafe × Herdr'));
   if (existing?.cafe) console.log(say(`Currently connected to ${existing.cafe}. Approving a new code replaces it.`, `目前連在「${existing.cafe}」。同意新的代碼會換成新的小屋。`));
@@ -64,10 +80,12 @@ async function connect(env = process.env) {
     if (polled.retry || polled.status === 'pending') continue;
     if (polled.status === 'approved') {
       const handover = await openHandover(key.privateKey, polled.sealed);
-      saveConnection(env, { url: handover.url, secret: handover.secret, cafe: handover.cafe, house: handover.house });
+      const connection = { url: handover.url, secret: handover.secret, cafe: handover.cafe, house: handover.house };
+      saveConnection(env, connection);
+      if (existing?.house && existing.url !== connection.url && !await revokeConnection(existing)) console.log(say(`Could not remove the previous Herdr source from ${existing.cafe ?? 'the old cafe'}. Remove it in that cafe's settings.`, `沒能移除「${existing.cafe ?? '舊小屋'}」裡原本的 Herdr 來源，請到那間小屋的設定移除。`));
       console.log('');
       console.log(bold(say(`Connected to ${handover.cafe}.`, `已連到「${handover.cafe}」。`)));
-      console.log(say('When an agent in Herdr finishes or gets stuck, the cafe will know.', 'Herdr 裡的 agent 做完或卡住時，小屋都會知道。'));
+      console.log(say('When a coding agent your residents use in Herdr finishes or gets stuck, the cafe will know.', '住民在 Herdr 裡用的 coding agent 做完或卡住時，小屋都會知道。'));
       notify('PA Cafe', say(`Connected to ${handover.cafe}`, `已連到「${handover.cafe}」`));
       return true;
     }
@@ -81,7 +99,7 @@ async function connect(env = process.env) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let ok = false;
-  try { ok = await connect(); } catch (error) { console.log(''); console.log(say('Could not connect:', '連不上：'), error instanceof Error ? error.message : String(error)); }
+  try { process.env.HERDR_PLUGIN_CONFIG_DIR ||= await configDir(process.env); ok = await connect(); } catch (error) { console.log(''); console.log(say('Could not connect:', '連不上：'), error instanceof Error ? error.message : String(error)); }
   console.log('');
   console.log(say('Press any key to close.', '按任意鍵關閉。'));
   await waitForKey(ok ? 8 : 120);

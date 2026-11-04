@@ -1,11 +1,13 @@
 // Shared helpers for the PA Cafe Herdr mod. Plain Node (18+), no dependencies, so `herdr plugin install` needs no build.
-import { createHmac, webcrypto } from 'node:crypto';
+import { createHmac, randomUUID, webcrypto } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const subtle = webcrypto.subtle;
 const INFO = new TextEncoder().encode('pa-cafe herdr link v1');
 export const DEFAULT_ORIGIN = 'https://pacafe.dnplus.dev';
+// The only body the cafe accepts on a signed DELETE, so no signed event can be replayed as a disconnect (shared/herdr-link.ts).
+export const DISCONNECT_BODY = '{"type":"pacafe.herdr.disconnect"}';
 
 const b64url = bytes => Buffer.from(bytes).toString('base64url');
 const unb64url = text => new Uint8Array(Buffer.from(text, 'base64url'));
@@ -39,6 +41,23 @@ export function saveConnection(env, connection) {
 export function forgetConnection(env) {
   const path = connectionPath(env);
   if (path) rmSync(path, { force: true });
+}
+
+/** Asks the cafe to remove this connection's Herdr source. True once the cafe no longer has it. */
+export async function revokeConnection(connection) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const id = `msg_${randomUUID()}`, timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = signDelivery(connection.secret, id, timestamp, DISCONNECT_BODY);
+    if (!signature) return false;
+    let response;
+    try {
+      response = await fetch(connection.url, { method: 'DELETE', headers: { 'content-type': 'application/json', 'webhook-id': id, 'webhook-timestamp': timestamp, 'webhook-signature': `v1,${signature}` }, body: DISCONNECT_BODY, signal: AbortSignal.timeout(15_000) });
+    } catch { return false; }
+    if (response.ok || response.status === 404) return true;
+    if (response.status !== 503) return false;
+    await new Promise(done => setTimeout(done, 5000));
+  }
+  return false;
 }
 
 // The cafe encrypts the handover to this key (ECDH P-256 + HKDF-SHA256 + AES-256-GCM, see shared/herdr-link.ts).
